@@ -9,6 +9,7 @@ from sklearn.multioutput import MultiOutputRegressor
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import Matern
 from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
 
 # -------------------------------------------------------------------------
 # 1. PAGE CONFIGURATION & STYLING
@@ -22,16 +23,18 @@ layout_template = go.layout.Template(
 )
 
 # -------------------------------------------------------------------------
-# 2. MODEL INITIALIZATION (SYNTHETIC BASELINE)
+# 2. MODEL INITIALIZATION (CACHE BUSTED & OPTIMIZED)
 # -------------------------------------------------------------------------
+# Renamed function to force Streamlit to clear its memory and rebuild the models
 @st.cache_resource
-def train_models():
+def build_bioprocess_models_v2():
     np.random.seed(42)
     n_samples = 100
+    
     # Simulate a baseline Central Composite Design space
     X_train = np.random.uniform(low=[5, 0.5, 1, 6], high=[15, 2, 5, 8], size=(n_samples, 4))
     
-    # Synthetic biological logic for baseline testing
+    # Synthetic biological logic
     Y_pha = 180 - 1.5 * (X_train[:, 0] - 12)**2 - 20 * (X_train[:, 1] - 1.0)**2 + np.random.normal(0, 5, n_samples)
     Y_bs = 80 - 2.0 * (X_train[:, 0] - 8)**2 - 15 * (X_train[:, 3] - 7.2)**2 + np.random.normal(0, 5, n_samples)
     Y_cdw = 0.5 + 0.1 * X_train[:, 0] + 0.5 * X_train[:, 1] + np.random.normal(0, 0.1, n_samples)
@@ -44,7 +47,6 @@ def train_models():
     Y_scaled = scaler_Y.fit_transform(Y_train)
     
     # --- DEEP MODEL: Optimized Bagged Ensemble ANN ---
-    # 1. Heavily regularized base neural network
     base_ann = MLPRegressor(
         hidden_layer_sizes=(20, 20), 
         activation='tanh', 
@@ -53,7 +55,6 @@ def train_models():
         alpha=0.05
     )
     
-    # 2. Bagging Regressor wrapper
     bagged_ann = BaggingRegressor(
         estimator=base_ann,
         n_estimators=15,
@@ -62,7 +63,6 @@ def train_models():
         random_state=42
     )
     
-    # 3. MultiOutput wrapper to prevent 1D/2D array crashing
     ann = MultiOutputRegressor(bagged_ann)
     ann.fit(X_scaled, Y_scaled)
     
@@ -78,7 +78,7 @@ def train_models():
     
     return scaler_X, scaler_Y, ann, gp_pha, gp_bs, gp_cdw
 
-scaler_X, scaler_Y, ann, gp_pha, gp_bs, gp_cdw = train_models()
+scaler_X, scaler_Y, ann, gp_pha, gp_bs, gp_cdw = build_bioprocess_models_v2()
 
 # -------------------------------------------------------------------------
 # 3. PORTAL UI: OPTIMAL FORMULATION
@@ -112,10 +112,11 @@ with c_slider:
 X_input = np.array([[gluc, nh4cl, po4, ph]])
 X_input_scaled = scaler_X.transform(X_input)
 
-# Ann prediction (MultiOutput returns 2D, we grab index [0])
+# Ann prediction safely parsed
 ann_pred_scaled = ann.predict(X_input_scaled)
 ann_pred = scaler_Y.inverse_transform(ann_pred_scaled)[0]
 
+# GP prediction
 gp_pha_pred, gp_pha_std = gp_pha.predict(X_input_scaled, return_std=True)
 gp_bs_pred, gp_bs_std = gp_bs.predict(X_input_scaled, return_std=True)
 gp_cdw_pred, gp_cdw_std = gp_cdw.predict(X_input_scaled, return_std=True)
@@ -175,7 +176,6 @@ if uploaded_file is not None:
         X_test = df[['Glucose', 'NH4Cl', 'PO4', 'pH']].values
         X_test_scaled = scaler_X.transform(X_test)
         
-        # Deep Predictions
         ann_preds_scaled = ann.predict(X_test_scaled)
         ann_preds = scaler_Y.inverse_transform(ann_preds_scaled)
         
@@ -183,7 +183,6 @@ if uploaded_file is not None:
         df['Pred_BS_Deep'] = ann_preds[:, 1]
         df['Pred_CDW_Deep'] = ann_preds[:, 2]
         
-        # Parity Plot Logic
         def plot_parity(df, actual_col, pred_col, title, unit):
             fig = go.Figure(layout=layout_template)
             min_val = min(df[actual_col].min(), df[pred_col].min()) * 0.9
@@ -199,7 +198,6 @@ if uploaded_file is not None:
             fig.update_layout(title=title, xaxis_title=f"Actual Yield ({unit})", yaxis_title=f"Predicted Yield ({unit})")
             return fig
 
-        # Metric Calculation Function
         def display_metrics(y_true, y_pred, unit):
             r2 = r2_score(y_true, y_pred)
             rmse = np.sqrt(mean_squared_error(y_true, y_pred))
