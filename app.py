@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import io
 import plotly.graph_objects as go
 from sklearn.neural_network import MLPRegressor
 from sklearn.gaussian_process import GaussianProcessRegressor
@@ -57,77 +58,53 @@ scaler_X, scaler_Y, ann, gp_pha, gp_bs, gp_cdw = train_models()
 # -------------------------------------------------------------------------
 # 3. PORTAL UI & INTERACTIVITY
 # -------------------------------------------------------------------------
-st.title("Dual PHA/Biosurfactant Prediction & Optimization Portal")
-
-# --- Consensus Optimal Formulation ---
-st.header("1. Recommended Consensus Formulation")
-st.info("**Optimal Parameters:** Glucose: 10.07 g/L | NH₄Cl: 1.15 g/L | PO₄: 5.00 g/L | pH: 7.39")
-col1, col2, col3 = st.columns(3)
-col1.metric("Predicted PHA Yield", "171.06 mg")
-col2.metric("Predicted BS Yield", "70.29 mg")
-col3.metric("Predicted Bacteria Weight (CDW)", "1.95 g")
-
-st.divider()
-
-# --- Manual Parameter Tweaking & Live Chart ---
-st.header("2. Extrapolate Yields (Parameter Tweaking)")
-
-c_slider, c_chart = st.columns([1, 2])
-
-with c_slider:
-    st.subheader("Culture Media Parameters")
-    gluc = st.slider("Glucose (g/L)", 5.0, 20.0, 10.0, 0.5)
-    nh4cl = st.slider("NH₄Cl (g/L)", 0.1, 3.0, 1.0, 0.1)
-    po4 = st.slider("PO₄ Buffer (g/L)", 1.0, 10.0, 3.5, 0.5)
-    ph = st.slider("pH", 5.0, 9.0, 7.0, 0.1)
-
-# Generate Predictions
-X_input = np.array([[gluc, nh4cl, po4, ph]])
-X_input_scaled = scaler_X.transform(X_input)
-
-ann_pred_scaled = ann.predict(X_input_scaled)
-ann_pred = scaler_Y.inverse_transform(ann_pred_scaled)[0]
-
-gp_pha_pred, gp_pha_std = gp_pha.predict(X_input_scaled, return_std=True)
-gp_bs_pred, gp_bs_std = gp_bs.predict(X_input_scaled, return_std=True)
-gp_cdw_pred, gp_cdw_std = gp_cdw.predict(X_input_scaled, return_std=True)
-gp_pred_scaled = np.array([[gp_pha_pred[0], gp_bs_pred[0], gp_cdw_pred[0]]])
-gp_pred = scaler_Y.inverse_transform(gp_pred_scaled)[0]
-
-with c_chart:
-    # Live updating bar chart
-    fig_live = go.Figure(data=[
-        go.Bar(name='Deep Model (ANN)', x=['PHA (mg)', 'Biosurfactant (mg)', 'CDW (g)'], y=[ann_pred[0], ann_pred[1], ann_pred[2]], marker_color='rgb(55, 83, 109)'),
-        go.Bar(name='Light Model (GP)', x=['PHA (mg)', 'Biosurfactant (mg)', 'CDW (g)'], y=[gp_pred[0], gp_pred[1], gp_pred[2]], marker_color='rgb(26, 118, 255)')
-    ])
-    fig_live.update_layout(barmode='group', title='Real-Time Model Comparison', template=layout_template, yaxis_title="Yield Volume")
-    st.plotly_chart(fig_live, use_container_width=True)
-
-st.divider()
+import io # Ensure this is added to your imports at the top of app.py
 
 # --- Wet-Lab Validation & Data Upload ---
 st.header("3. Validation: Upload Wet-Lab Results")
 
-# Template Generation
+# Generate Excel Template in Memory
 template_df = pd.DataFrame({
-    'Glucose': [10.0, 12.5], 'NH4Cl': [1.0, 1.5], 'PO4': [3.5, 4.0], 'pH': [7.0, 7.2],
-    'Actual_PHA': [158.0, 165.0], 'Actual_BS': [75.0, 68.0], 'Actual_CDW': [1.98, 1.45]
+    'Experiment_Number': [1, 2],
+    'Date': ['2026-03-14', '2026-03-15'],
+    'Time': ['08:00', '10:30'],
+    'Glucose': [10.0, 12.5], 
+    'NH4Cl': [1.0, 1.5], 
+    'PO4': [3.5, 4.0], 
+    'pH': [7.0, 7.2],
+    'Actual_PHA': [158.0, 165.0], 
+    'Actual_BS': [75.0, 68.0], 
+    'Actual_CDW': [1.98, 1.45]
 })
-csv_template = template_df.to_csv(index=False).encode('utf-8')
 
-st.markdown("Download the template, fill it with your experimental results, and upload it below to compare actual yields against computational predictions.")
-st.download_button(label="📥 Download CSV Template", data=csv_template, file_name="bioprocess_template.csv", mime="text/csv")
+buffer = io.BytesIO()
+with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+    template_df.to_excel(writer, index=False, sheet_name='CCD_Data')
+excel_data = buffer.getvalue()
 
-uploaded_file = st.file_uploader("Upload Populated CSV Data", type=["csv"])
+st.markdown("Download the Excel template, fill it with your experimental results, and upload it below.")
+st.download_button(
+    label="📥 Download Excel Template", 
+    data=excel_data, 
+    file_name="bioprocess_ccd_template.xlsx", 
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
+
+# Upload and Process Excel Data
+uploaded_file = st.file_uploader("Upload Populated Excel Data", type=["xlsx"])
 
 if uploaded_file is not None:
-    df = pd.read_csv(uploaded_file)
+    # Read the Excel file using openpyxl
+    df = pd.read_excel(uploaded_file, engine='openpyxl')
+    
+    # Required columns for prediction
     required_cols = ['Glucose', 'NH4Cl', 'PO4', 'pH', 'Actual_PHA', 'Actual_BS', 'Actual_CDW']
     
     if all(col in df.columns for col in required_cols):
         X_test = df[['Glucose', 'NH4Cl', 'PO4', 'pH']].values
         X_test_scaled = scaler_X.transform(X_test)
         
+        # Deep Predictions
         ann_preds_scaled = ann.predict(X_test_scaled)
         ann_preds = scaler_Y.inverse_transform(ann_preds_scaled)
         
@@ -135,14 +112,20 @@ if uploaded_file is not None:
         df['Pred_BS_Deep'] = ann_preds[:, 1]
         df['Pred_CDW_Deep'] = ann_preds[:, 2]
         
+        # Chart Generation
         def plot_parity(df, actual_col, pred_col, title, unit):
             fig = go.Figure(layout=layout_template)
             min_val = min(df[actual_col].min(), df[pred_col].min()) * 0.9
             max_val = max(df[actual_col].max(), df[pred_col].max()) * 1.1
             fig.add_trace(go.Scatter(x=[min_val, max_val], y=[min_val, max_val],
                                      mode='lines', name='Perfect Prediction', line=dict(color='black', dash='dash')))
+            
+            # Hover text to include tracking info if available
+            hover_text = df.apply(lambda row: f"Exp: {row.get('Experiment_Number', 'N/A')} | Date: {row.get('Date', 'N/A')}", axis=1)
+            
             fig.add_trace(go.Scatter(x=df[actual_col], y=df[pred_col],
-                                     mode='markers', name='Data Points', marker=dict(size=12, color='rgba(255, 99, 71, 0.8)', line=dict(width=2, color='darkred'))))
+                                     mode='markers', name='Data Points', text=hover_text,
+                                     marker=dict(size=12, color='rgba(255, 99, 71, 0.8)', line=dict(width=2, color='darkred'))))
             fig.update_layout(title=title, xaxis_title=f"Actual Yield ({unit})", yaxis_title=f"Predicted Yield ({unit})")
             return fig
 
@@ -155,7 +138,7 @@ if uploaded_file is not None:
         with t3:
             st.plotly_chart(plot_parity(df, 'Actual_CDW', 'Pred_CDW_Deep', "Parity Plot: Deep Model vs Actual CDW", "g"), use_container_width=True)
             
-        st.dataframe(df.style.format("{:.2f}"))
+        st.dataframe(df.style.format(precision=2))
         
     else:
-        st.error(f"Missing required columns. Please ensure CSV matches the template structure exactly.")
+        st.error(f"Missing required mathematical columns. Please ensure the Excel file contains: {required_cols}")
