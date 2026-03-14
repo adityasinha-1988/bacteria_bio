@@ -134,7 +134,7 @@ with c_chart:
 st.divider()
 
 # -------------------------------------------------------------------------
-# 5. PORTAL UI: WET-LAB EXCEL VALIDATION
+# 5. PORTAL UI: WET-LAB EXCEL VALIDATION (BULLETPROOF VERSION)
 # -------------------------------------------------------------------------
 st.header("3. Validation: Upload Wet-Lab Results")
 
@@ -157,7 +157,7 @@ with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
     template_df.to_excel(writer, index=False, sheet_name='CCD_Data')
 excel_data = buffer.getvalue()
 
-st.markdown("Download the Excel template, fill it with your experimental results, and upload it below to compare actual yields against computational predictions.")
+st.markdown("Download the template, fill it with experimental results, and upload it below.")
 st.download_button(
     label="📥 Download Excel Template", 
     data=excel_data, 
@@ -165,63 +165,76 @@ st.download_button(
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
 
-uploaded_file = st.file_uploader("Upload Populated Excel Data", type=["xlsx"])
+# Now accepts BOTH CSV and Excel to prevent format crashing
+uploaded_file = st.file_uploader("Upload Populated Data (Excel or CSV)", type=["xlsx", "csv"])
 
 if uploaded_file is not None:
-    df = pd.read_excel(uploaded_file, engine='openpyxl')
-    
-    required_cols = ['Glucose', 'NH4Cl', 'PO4', 'pH', 'Actual_PHA', 'Actual_BS', 'Actual_CDW']
-    
-    if all(col in df.columns for col in required_cols):
-        X_test = df[['Glucose', 'NH4Cl', 'PO4', 'pH']].values
-        X_test_scaled = scaler_X.transform(X_test)
+    try:
+        # Route processing based on file extension
+        if uploaded_file.name.endswith('.csv'):
+            df = pd.read_csv(uploaded_file)
+        else:
+            df = pd.read_excel(uploaded_file, engine='openpyxl')
         
-        ann_preds_scaled = ann.predict(X_test_scaled)
-        ann_preds = scaler_Y.inverse_transform(ann_preds_scaled)
+        required_cols = ['Glucose', 'NH4Cl', 'PO4', 'pH', 'Actual_PHA', 'Actual_BS', 'Actual_CDW']
         
-        df['Pred_PHA_Deep'] = ann_preds[:, 0]
-        df['Pred_BS_Deep'] = ann_preds[:, 1]
-        df['Pred_CDW_Deep'] = ann_preds[:, 2]
-        
-        def plot_parity(df, actual_col, pred_col, title, unit):
-            fig = go.Figure(layout=layout_template)
-            min_val = min(df[actual_col].min(), df[pred_col].min()) * 0.9
-            max_val = max(df[actual_col].max(), df[pred_col].max()) * 1.1
-            fig.add_trace(go.Scatter(x=[min_val, max_val], y=[min_val, max_val],
-                                     mode='lines', name='Perfect Prediction', line=dict(color='black', dash='dash')))
+        if all(col in df.columns for col in required_cols):
+            # Aggressively drop any blank rows/NaNs that crash the math functions
+            df = df.dropna(subset=required_cols)
             
-            hover_text = df.apply(lambda row: f"Exp: {row.get('Experiment_Number', 'N/A')} | Date: {row.get('Date', 'N/A')}", axis=1)
+            X_test = df[['Glucose', 'NH4Cl', 'PO4', 'pH']].values
+            X_test_scaled = scaler_X.transform(X_test)
             
-            fig.add_trace(go.Scatter(x=df[actual_col], y=df[pred_col],
-                                     mode='markers', name='Data Points', text=hover_text,
-                                     marker=dict(size=12, color='rgba(255, 99, 71, 0.8)', line=dict(width=2, color='darkred'))))
-            fig.update_layout(title=title, xaxis_title=f"Actual Yield ({unit})", yaxis_title=f"Predicted Yield ({unit})")
-            return fig
+            ann_preds_scaled = ann.predict(X_test_scaled)
+            ann_preds = scaler_Y.inverse_transform(ann_preds_scaled)
+            
+            df['Pred_PHA_Deep'] = ann_preds[:, 0]
+            df['Pred_BS_Deep'] = ann_preds[:, 1]
+            df['Pred_CDW_Deep'] = ann_preds[:, 2]
+            
+            def plot_parity(df, actual_col, pred_col, title, unit):
+                fig = go.Figure(layout=layout_template)
+                min_val = min(df[actual_col].min(), df[pred_col].min()) * 0.9
+                max_val = max(df[actual_col].max(), df[pred_col].max()) * 1.1
+                fig.add_trace(go.Scatter(x=[min_val, max_val], y=[min_val, max_val],
+                                         mode='lines', name='Perfect Prediction', line=dict(color='black', dash='dash')))
+                
+                hover_text = df.apply(lambda row: f"Exp: {row.get('Experiment_Number', 'N/A')} | Date: {row.get('Date', 'N/A')}", axis=1)
+                
+                fig.add_trace(go.Scatter(x=df[actual_col], y=df[pred_col],
+                                         mode='markers', name='Data Points', text=hover_text,
+                                         marker=dict(size=12, color='rgba(255, 99, 71, 0.8)', line=dict(width=2, color='darkred'))))
+                fig.update_layout(title=title, xaxis_title=f"Actual Yield ({unit})", yaxis_title=f"Predicted Yield ({unit})")
+                return fig
 
-        def display_metrics(y_true, y_pred, unit):
-            r2 = r2_score(y_true, y_pred)
-            rmse = np.sqrt(mean_squared_error(y_true, y_pred))
-            mae = mean_absolute_error(y_true, y_pred)
-            
-            mc1, mc2, mc3 = st.columns(3)
-            mc1.metric("R² Score", f"{r2:.4f}")
-            mc2.metric(f"RMSE ({unit})", f"{rmse:.2f}")
-            mc3.metric(f"MAE ({unit})", f"{mae:.2f}")
+            def display_metrics(y_true, y_pred, unit):
+                r2 = r2_score(y_true, y_pred)
+                rmse = np.sqrt(mean_squared_error(y_true, y_pred))
+                mae = mean_absolute_error(y_true, y_pred)
+                
+                mc1, mc2, mc3 = st.columns(3)
+                mc1.metric("R² Score", f"{r2:.4f}")
+                mc2.metric(f"RMSE ({unit})", f"{rmse:.2f}")
+                mc3.metric(f"MAE ({unit})", f"{mae:.2f}")
 
-        t1, t2, t3 = st.tabs(["PHA Analysis", "Biosurfactant Analysis", "Biomass (CDW) Analysis"])
-        
-        with t1:
-            st.plotly_chart(plot_parity(df, 'Actual_PHA', 'Pred_PHA_Deep', "Parity Plot: Deep Model vs Actual PHA", "mg"), use_container_width=True)
-            display_metrics(df['Actual_PHA'], df['Pred_PHA_Deep'], "mg")
-        with t2:
-            st.plotly_chart(plot_parity(df, 'Actual_BS', 'Pred_BS_Deep', "Parity Plot: Deep Model vs Actual Biosurfactant", "mg"), use_container_width=True)
-            display_metrics(df['Actual_BS'], df['Pred_BS_Deep'], "mg")
-        with t3:
-            st.plotly_chart(plot_parity(df, 'Actual_CDW', 'Pred_CDW_Deep', "Parity Plot: Deep Model vs Actual CDW", "g"), use_container_width=True)
-            display_metrics(df['Actual_CDW'], df['Pred_CDW_Deep'], "g")
+            t1, t2, t3 = st.tabs(["PHA Analysis", "Biosurfactant Analysis", "Biomass (CDW) Analysis"])
             
-        st.divider()
-        st.dataframe(df.style.format(precision=2))
-        
-    else:
-        st.error(f"Missing required columns. Please ensure the Excel file contains: {required_cols}")
+            with t1:
+                st.plotly_chart(plot_parity(df, 'Actual_PHA', 'Pred_PHA_Deep', "Parity Plot: Deep Model vs Actual PHA", "mg"), use_container_width=True)
+                display_metrics(df['Actual_PHA'], df['Pred_PHA_Deep'], "mg")
+            with t2:
+                st.plotly_chart(plot_parity(df, 'Actual_BS', 'Pred_BS_Deep', "Parity Plot: Deep Model vs Actual Biosurfactant", "mg"), use_container_width=True)
+                display_metrics(df['Actual_BS'], df['Pred_BS_Deep'], "mg")
+            with t3:
+                st.plotly_chart(plot_parity(df, 'Actual_CDW', 'Pred_CDW_Deep', "Parity Plot: Deep Model vs Actual CDW", "g"), use_container_width=True)
+                display_metrics(df['Actual_CDW'], df['Pred_CDW_Deep'], "g")
+                
+            st.divider()
+            st.dataframe(df.style.format(precision=2))
+            
+        else:
+            st.error(f"Missing required columns. Please ensure the file contains exactly: {required_cols}")
+            
+    except Exception as e:
+        # Catches exact error trace and prints it to the UI instead of crashing
+        st.error(f"Data Processing Error: {str(e)}. Please check your file for hidden text in number columns.")
