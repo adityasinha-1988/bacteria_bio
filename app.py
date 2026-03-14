@@ -58,7 +58,6 @@ scaler_X, scaler_Y, ann, gp_pha, gp_bs, gp_cdw = train_models()
 # -------------------------------------------------------------------------
 # 3. PORTAL UI & INTERACTIVITY
 # -------------------------------------------------------------------------
-import io # Ensure this is added to your imports at the top of app.py
 
 # --- Wet-Lab Validation & Data Upload ---
 st.header("3. Validation: Upload Wet-Lab Results")
