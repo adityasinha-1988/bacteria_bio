@@ -4,6 +4,8 @@ import numpy as np
 import plotly.graph_objects as go
 import io
 from sklearn.neural_network import MLPRegressor
+from sklearn.ensemble import BaggingRegressor
+from sklearn.multioutput import MultiOutputRegressor
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import Matern
 from sklearn.preprocessing import StandardScaler
@@ -26,6 +28,7 @@ layout_template = go.layout.Template(
 def train_models():
     np.random.seed(42)
     n_samples = 100
+    # Simulate a baseline Central Composite Design space
     X_train = np.random.uniform(low=[5, 0.5, 1, 6], high=[15, 2, 5, 8], size=(n_samples, 4))
     
     # Synthetic biological logic for baseline testing
@@ -40,11 +43,30 @@ def train_models():
     X_scaled = scaler_X.fit_transform(X_train)
     Y_scaled = scaler_Y.fit_transform(Y_train)
     
-    # Deep Model (ANN)
-    ann = MLPRegressor(hidden_layer_sizes=(15, 15), activation='tanh', solver='lbfgs', max_iter=5000)
+    # --- DEEP MODEL: Optimized Bagged Ensemble ANN ---
+    # 1. Heavily regularized base neural network
+    base_ann = MLPRegressor(
+        hidden_layer_sizes=(20, 20), 
+        activation='tanh', 
+        solver='lbfgs', 
+        max_iter=10000, 
+        alpha=0.05
+    )
+    
+    # 2. Bagging Regressor wrapper
+    bagged_ann = BaggingRegressor(
+        estimator=base_ann,
+        n_estimators=15,
+        max_samples=0.85,
+        n_jobs=-1,
+        random_state=42
+    )
+    
+    # 3. MultiOutput wrapper to prevent 1D/2D array crashing
+    ann = MultiOutputRegressor(bagged_ann)
     ann.fit(X_scaled, Y_scaled)
     
-    # Light Model (GP)
+    # --- LIGHT MODEL: Gaussian Process ---
     kernel = Matern(nu=2.5)
     gp_pha = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=5, alpha=0.1)
     gp_bs = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=5, alpha=0.1)
@@ -90,6 +112,7 @@ with c_slider:
 X_input = np.array([[gluc, nh4cl, po4, ph]])
 X_input_scaled = scaler_X.transform(X_input)
 
+# Ann prediction (MultiOutput returns 2D, we grab index [0])
 ann_pred_scaled = ann.predict(X_input_scaled)
 ann_pred = scaler_Y.inverse_transform(ann_pred_scaled)[0]
 
@@ -101,7 +124,7 @@ gp_pred = scaler_Y.inverse_transform(gp_pred_scaled)[0]
 
 with c_chart:
     fig_live = go.Figure(data=[
-        go.Bar(name='Deep Model (ANN)', x=['PHA (mg)', 'Biosurfactant (mg)', 'CDW (g)'], y=[ann_pred[0], ann_pred[1], ann_pred[2]], marker_color='rgb(55, 83, 109)'),
+        go.Bar(name='Deep Model (Ensemble ANN)', x=['PHA (mg)', 'Biosurfactant (mg)', 'CDW (g)'], y=[ann_pred[0], ann_pred[1], ann_pred[2]], marker_color='rgb(55, 83, 109)'),
         go.Bar(name='Light Model (GP)', x=['PHA (mg)', 'Biosurfactant (mg)', 'CDW (g)'], y=[gp_pred[0], gp_pred[1], gp_pred[2]], marker_color='rgb(26, 118, 255)')
     ])
     fig_live.update_layout(barmode='group', title='Real-Time Model Comparison', template=layout_template, yaxis_title="Yield Volume")
@@ -152,7 +175,7 @@ if uploaded_file is not None:
         X_test = df[['Glucose', 'NH4Cl', 'PO4', 'pH']].values
         X_test_scaled = scaler_X.transform(X_test)
         
-        # Deep Predictions
+        # Deep Predictions (Error safely bypassed by MultiOutputRegressor)
         ann_preds_scaled = ann.predict(X_test_scaled)
         ann_preds = scaler_Y.inverse_transform(ann_preds_scaled)
         
