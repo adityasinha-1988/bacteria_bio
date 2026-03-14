@@ -175,7 +175,7 @@ if uploaded_file is not None:
         X_test = df[['Glucose', 'NH4Cl', 'PO4', 'pH']].values
         X_test_scaled = scaler_X.transform(X_test)
         
-        # Deep Predictions (Error safely bypassed by MultiOutputRegressor)
+        # Deep Predictions
         ann_preds_scaled = ann.predict(X_test_scaled)
         ann_preds = scaler_Y.inverse_transform(ann_preds_scaled)
         
@@ -199,15 +199,30 @@ if uploaded_file is not None:
             fig.update_layout(title=title, xaxis_title=f"Actual Yield ({unit})", yaxis_title=f"Predicted Yield ({unit})")
             return fig
 
+        # Metric Calculation Function
+        def display_metrics(y_true, y_pred, unit):
+            r2 = r2_score(y_true, y_pred)
+            rmse = np.sqrt(mean_squared_error(y_true, y_pred))
+            mae = mean_absolute_error(y_true, y_pred)
+            
+            mc1, mc2, mc3 = st.columns(3)
+            mc1.metric("R² Score", f"{r2:.4f}")
+            mc2.metric(f"RMSE ({unit})", f"{rmse:.2f}")
+            mc3.metric(f"MAE ({unit})", f"{mae:.2f}")
+
         t1, t2, t3 = st.tabs(["PHA Analysis", "Biosurfactant Analysis", "Biomass (CDW) Analysis"])
         
         with t1:
             st.plotly_chart(plot_parity(df, 'Actual_PHA', 'Pred_PHA_Deep', "Parity Plot: Deep Model vs Actual PHA", "mg"), use_container_width=True)
+            display_metrics(df['Actual_PHA'], df['Pred_PHA_Deep'], "mg")
         with t2:
             st.plotly_chart(plot_parity(df, 'Actual_BS', 'Pred_BS_Deep', "Parity Plot: Deep Model vs Actual Biosurfactant", "mg"), use_container_width=True)
+            display_metrics(df['Actual_BS'], df['Pred_BS_Deep'], "mg")
         with t3:
             st.plotly_chart(plot_parity(df, 'Actual_CDW', 'Pred_CDW_Deep', "Parity Plot: Deep Model vs Actual CDW", "g"), use_container_width=True)
+            display_metrics(df['Actual_CDW'], df['Pred_CDW_Deep'], "g")
             
+        st.divider()
         st.dataframe(df.style.format(precision=2))
         
     else:
